@@ -1,16 +1,6 @@
 # Archery
 
-First-person bow-and-arrow target game. C# / .NET 10 / [Raylib-cs](https://github.com/ChrisDill/Raylib-cs).
-
-## Layout
-
-| Path | Purpose |
-|---|---|
-| `src/Archery.Game` | The game: window, main loop, scenes, asset loading. |
-| `tools/Archery.AssetGen` | Procedurally draws every texture and saves it as PNG into `assets/`. |
-| `assets/` | Generated assets (committed). The game only loads these; it never generates art at runtime. |
-
-`src/Archery.Game/Assets/AssetIds.cs` is the single list of asset files; it is linked into the generator so both sides stay in sync.
+First-person bow-and-arrow target game in pixel art. C# / .NET 10 / [Raylib-cs](https://github.com/ChrisDill/Raylib-cs).
 
 ## Run
 
@@ -18,12 +8,43 @@ First-person bow-and-arrow target game. C# / .NET 10 / [Raylib-cs](https://githu
 dotnet run --project src/Archery.Game
 ```
 
-## Regenerate assets
+## Layout
 
-Only needed after changing a generator in `tools/Archery.AssetGen/Program.cs`:
+| Path | Purpose |
+|---|---|
+| `src/Archery.Game/Core` | Window, main loop, scene switching, config. `PixelScreen` is the native resolution. |
+| `src/Archery.Game/Scenes` | Screens. `RangeScene` composes the first-person view. |
+| `src/Archery.Game/Assets` | Image loading (`AssetStore`), file list (`AssetIds`), sprite attachment points (`SpriteAnchors`). |
+| `assets/textures` | Finished art as PNG files, copied next to the executable on build. |
 
-```sh
-dotnet run --project tools/Archery.AssetGen
-```
+## Rendering
 
-Rebuild the game afterwards so the new files are copied to its output folder.
+Everything is drawn at **320×180** into an off-screen texture, then scaled up by the largest whole number that fits
+the window (4× → 1280×720), letterboxed if needed. Textures use nearest-neighbour sampling, so art pixels stay
+square blocks. Draw sprites at whole-pixel positions.
+
+## Art
+
+Assets are plain PNG files drawn at native size (one image pixel = one game pixel). Edit or replace them in any
+pixel-art editor (Aseprite, Piskel, Figma with pixel grid, …) and rebuild.
+
+- **PNG only.** The raylib build bundled with Raylib-cs has no JPG decoder.
+- Some sprites have attachment points (arrow rest and string nock point on the bow, the arrow's nock, the face
+  centre on the target stand). They live in `SpriteAnchors.cs`; if you redraw one of those images, update its pixel
+  coordinates there.
+- The arrow is drawn pre-angled at 45° and the bow is tilted 45° the other way, so the arrow sits perpendicular to
+  the string, on the arrow rest, with its nock on the string. The target sits on the arrow's diagonal. Pulling later
+  slides the arrow along that diagonal instead of rotating it (rotated pixel art turns jagged).
+- The bowstring is not part of `bow.png`; the game draws it as a 1-pixel line between the bow's tip/contact anchors
+  so it can be pulled later.
+
+| File | Size | Anchors |
+|---|---|---|
+| `sky.png` | 320×84 | Drawn at the top. |
+| `hills.png` | 320×40 | Bottom edge sits on the horizon (y=81). |
+| `ground.png` | 320×99 | Top edge is the horizon. |
+| `target_face.png` | 41×41 | Centre (20,20), radius 20. |
+| `target_stand.png` | 60×76 | Face centre (30,28). |
+| `bow.png` | 132×132 | Tilted 45°. Arrow rest (63,57), nock point on string (78,72), tips/contacts in `SpriteAnchors.Bow`. |
+| `arrow.png` | 54×54 | Nock (48,48), tip (4,4). Fletching sits near the nock, clear of the bow. |
+| `crosshair.png` | 11×11 | Centred. |
