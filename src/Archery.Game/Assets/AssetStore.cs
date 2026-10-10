@@ -3,8 +3,7 @@ using Raylib_cs;
 namespace Archery.Assets;
 
 /// <summary>
-/// Loads pre-generated textures from disk. Requires an open window (GPU context).
-/// Assets are never generated at runtime; run Archery.AssetGen to (re)create them.
+/// Loads the image files in <c>assets/</c> into GPU textures. Requires an open window (GPU context).
 /// </summary>
 public sealed class AssetStore : IDisposable
 {
@@ -23,8 +22,7 @@ public sealed class AssetStore : IDisposable
             var path = Path.Combine(_root, id);
             if (!File.Exists(path))
             {
-                throw new FileNotFoundException(
-                    $"Missing asset '{id}'. Run: dotnet run --project tools/Archery.AssetGen", path);
+                throw new FileNotFoundException($"Missing asset '{id}'.", path);
             }
 
             var texture = Raylib.LoadTexture(path);
@@ -33,7 +31,8 @@ public sealed class AssetStore : IDisposable
                 throw new InvalidDataException($"Failed to load texture '{path}'.");
             }
 
-            Raylib.SetTextureFilter(texture, TextureFilter.Bilinear);
+            // Pixel art: sprites are drawn 1:1 into the low-res frame, so sample nearest-neighbour only.
+            Raylib.SetTextureFilter(texture, TextureFilter.Point);
             _textures[id] = texture;
         }
     }

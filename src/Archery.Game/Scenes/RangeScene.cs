@@ -6,12 +6,23 @@ using Raylib_cs;
 namespace Archery.Scenes;
 
 /// <summary>
-/// First-person view of the shooting range. Static layout only: no aiming, drawing, or shooting yet.
+/// First-person view of the shooting range at rest: floating bow, arrow nocked and pointing at the target.
+/// Drawn in native <see cref="PixelScreen"/> pixels. Layout only; no aiming, drawing, or shooting yet.
 /// </summary>
 public sealed class RangeScene : IScene
 {
-    private const float HorizonRatio = 0.55f;
-    private const float TargetScreenSize = 160f;
+    private const int Horizon = 81;
+    private static readonly Vector2 Target = new(156, 82);
+
+    /// <summary>
+    /// The arrow is drawn at 45°, so the arrow rest sits on the diagonal through the target centre, this many
+    /// pixel steps back from it.
+    /// </summary>
+    private const int RestDistance = 60;
+    private static readonly Vector2 ArrowRest = Target - SpriteAnchors.Arrow.Direction * RestDistance;
+
+    private static readonly Color StringColor = new(234, 212, 170, 255);
+    private static readonly Color ServingColor = new(24, 20, 37, 255);
 
     private readonly AssetStore _assets;
 
@@ -26,43 +37,64 @@ public sealed class RangeScene : IScene
 
     public void Draw()
     {
-        float w = Raylib.GetScreenWidth();
-        float h = Raylib.GetScreenHeight();
-        float horizon = h * HorizonRatio;
+        var hills = _assets.Texture(AssetIds.Hills);
+        Raylib.DrawTexture(_assets.Texture(AssetIds.Sky), 0, 0, Color.White);
+        Raylib.DrawTexture(hills, 0, Horizon + 2 - hills.Height, Color.White);
+        Raylib.DrawTexture(_assets.Texture(AssetIds.Ground), 0, Horizon, Color.White);
 
-        DrawStretched(_assets.Texture(AssetIds.Sky), new Rectangle(0, 0, w, horizon));
-        DrawStretched(_assets.Texture(AssetIds.Ground), new Rectangle(0, horizon, w, h - horizon));
+        DrawAt(AssetIds.TargetStand, SpriteAnchors.TargetStand.FaceCenter, Target);
+        DrawAt(AssetIds.TargetFace, SpriteAnchors.TargetFace.Center, Target);
 
-        // Target stands on the horizon in the middle of the view.
-        DrawCentered(_assets.Texture(AssetIds.Target), new Vector2(w / 2f, horizon - TargetScreenSize / 2f), TargetScreenSize);
+        // Bow rig: bow placed by its arrow rest; arrow nock sits on the string, shaft over the rest.
+        var bowOrigin = ArrowRest - SpriteAnchors.Bow.Shelf;
+        var nock = bowOrigin + SpriteAnchors.Bow.Nock;
 
-        // Bow held in front of the viewer, arrow nocked along the center line.
-        var bow = _assets.Texture(AssetIds.Bow);
-        float bowHeight = h * 0.95f;
-        DrawCentered(bow, new Vector2(w / 2f, h * 0.72f), bowHeight);
-
-        var arrow = _assets.Texture(AssetIds.Arrow);
-        DrawCentered(arrow, new Vector2(w / 2f, h * 0.85f), h * 0.6f);
+        DrawAt(AssetIds.Bow, SpriteAnchors.Bow.Shelf, ArrowRest);
+        DrawAt(AssetIds.Arrow, SpriteAnchors.Arrow.Nock, nock);
+        DrawString(bowOrigin, nock);
 
         var crosshair = _assets.Texture(AssetIds.Crosshair);
-        DrawCentered(crosshair, new Vector2(w / 2f, h / 2f), crosshair.Height);
+        DrawAt(AssetIds.Crosshair, new Vector2(crosshair.Width / 2, crosshair.Height / 2), Target);
     }
 
     public void Exit() { }
 
-    private static void DrawStretched(Texture2D texture, Rectangle dest)
+    /// <summary>Braced string: tips wrap the recurves, straight run between the contact points, serving at the nock.</summary>
+    private static void DrawString(Vector2 bowOrigin, Vector2 nock)
     {
-        var source = new Rectangle(0, 0, texture.Width, texture.Height);
-        Raylib.DrawTexturePro(texture, source, dest, Vector2.Zero, 0f, Color.White);
+        var topTip = bowOrigin + SpriteAnchors.Bow.TopTip;
+        var topContact = bowOrigin + SpriteAnchors.Bow.TopContact;
+        var bottomContact = bowOrigin + SpriteAnchors.Bow.BottomContact;
+        var bottomTip = bowOrigin + SpriteAnchors.Bow.BottomTip;
+
+        PixelLine(topTip, topContact, StringColor);
+        PixelLine(topContact, bottomContact, StringColor);
+        PixelLine(bottomContact, bottomTip, StringColor);
+        var along = new Vector2(Math.Sign(topContact.X - bottomContact.X), Math.Sign(topContact.Y - bottomContact.Y));
+        PixelLine(nock - along * 4, nock + along * 4, ServingColor);
     }
 
-    /// <summary>Draws the texture centered on <paramref name="center"/>, scaled to <paramref name="height"/> (aspect kept).</summary>
-    private static void DrawCentered(Texture2D texture, Vector2 center, float height)
+    /// <summary>Bresenham line, one pixel wide, no anti-aliasing.</summary>
+    private static void PixelLine(Vector2 from, Vector2 to, Color color)
     {
-        float scale = height / texture.Height;
-        float width = texture.Width * scale;
-        var source = new Rectangle(0, 0, texture.Width, texture.Height);
-        var dest = new Rectangle(center.X - width / 2f, center.Y - height / 2f, width, height);
-        Raylib.DrawTexturePro(texture, source, dest, Vector2.Zero, 0f, Color.White);
+        int x0 = (int)from.X, y0 = (int)from.Y, x1 = (int)to.X, y1 = (int)to.Y;
+        int dx = Math.Abs(x1 - x0), dy = -Math.Abs(y1 - y0);
+        int sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+        int err = dx + dy;
+        while (true)
+        {
+            Raylib.DrawPixel(x0, y0, color);
+            if (x0 == x1 && y0 == y1) return;
+            int e2 = 2 * err;
+            if (e2 >= dy) { err += dy; x0 += sx; }
+            if (e2 <= dx) { err += dx; y0 += sy; }
+        }
+    }
+
+    /// <summary>Draws a sprite so that its pixel <paramref name="anchor"/> lands on <paramref name="screen"/>.</summary>
+    private void DrawAt(string id, Vector2 anchor, Vector2 screen)
+    {
+        var pos = screen - anchor;
+        Raylib.DrawTexture(_assets.Texture(id), (int)pos.X, (int)pos.Y, Color.White);
     }
 }

@@ -1,3 +1,4 @@
+using System.Numerics;
 using Archery.Assets;
 using Archery.Scenes;
 using Raylib_cs;
@@ -17,11 +18,13 @@ public sealed class Game
 
     public void Run()
     {
-        Raylib.SetConfigFlags(ConfigFlags.VSyncHint | ConfigFlags.Msaa4xHint);
-        Raylib.InitWindow(_config.ScreenWidth, _config.ScreenHeight, _config.Title);
+        Raylib.SetConfigFlags(ConfigFlags.VSyncHint);
+        Raylib.InitWindow(PixelScreen.Width * _config.WindowScale, PixelScreen.Height * _config.WindowScale, _config.Title);
         Raylib.SetTargetFPS(_config.TargetFps);
 
-        // Textures need the GL context, so they're loaded after InitWindow and unloaded before CloseWindow.
+        // GPU resources need the GL context, so they're created after InitWindow and released before CloseWindow.
+        var frame = Raylib.LoadRenderTexture(PixelScreen.Width, PixelScreen.Height);
+        Raylib.SetTextureFilter(frame.Texture, TextureFilter.Point);
         var assets = new AssetStore(_config.AssetRoot);
         try
         {
@@ -32,9 +35,14 @@ public sealed class Game
             {
                 _scenes.Update(Raylib.GetFrameTime());
 
-                Raylib.BeginDrawing();
+                Raylib.BeginTextureMode(frame);
                 Raylib.ClearBackground(Color.Black);
                 _scenes.Draw();
+                Raylib.EndTextureMode();
+
+                Raylib.BeginDrawing();
+                Raylib.ClearBackground(Color.Black);
+                PresentFrame(frame.Texture);
                 if (_config.ShowFps)
                 {
                     Raylib.DrawFPS(10, 10);
@@ -46,7 +54,19 @@ public sealed class Game
         {
             _scenes.Shutdown();
             assets.Dispose();
+            Raylib.UnloadRenderTexture(frame);
             Raylib.CloseWindow();
         }
+    }
+
+    /// <summary>Scales the native frame by the largest whole factor that fits, centred (letterboxed).</summary>
+    private static void PresentFrame(Texture2D frame)
+    {
+        int scale = Math.Max(1, Math.Min(Raylib.GetScreenWidth() / PixelScreen.Width, Raylib.GetScreenHeight() / PixelScreen.Height));
+        int w = PixelScreen.Width * scale, h = PixelScreen.Height * scale;
+        var dest = new Rectangle((Raylib.GetScreenWidth() - w) / 2, (Raylib.GetScreenHeight() - h) / 2, w, h);
+        // Render textures are stored bottom-up; a negative source height flips them upright.
+        var source = new Rectangle(0, 0, PixelScreen.Width, -PixelScreen.Height);
+        Raylib.DrawTexturePro(frame, source, dest, Vector2.Zero, 0f, Color.White);
     }
 }
