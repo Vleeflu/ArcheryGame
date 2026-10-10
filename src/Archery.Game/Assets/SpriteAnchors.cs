@@ -22,27 +22,27 @@ public static class SpriteAnchors
     }
 
     /// <summary>
-    /// bow.png (132x132): recurve tilted 45° (lower-left to upper-right) so it is perpendicular to the 45° arrow.
-    /// Back of the bow faces up-left (toward the target), string side faces down-right. The string is not in the image.
+    /// bow.png (110x160): recurve standing nearly upright, leaning along a 1:2 slope (top tip up-right) so it is
+    /// perpendicular to the arrow. Back of the bow faces the target, string side faces down-right. No string in the image.
     /// </summary>
     public static class Bow
     {
         /// <summary>Pixel the arrow shaft passes over when resting on the arrow rest.</summary>
-        public static readonly Vector2 Shelf = new(63, 57);
-        /// <summary>Where the arrow's nock sits on the braced string (15 steps from <see cref="Shelf"/> along +x+y).</summary>
-        public static readonly Vector2 Nock = new(78, 72);
-        public static readonly Vector2 TopTip = new(123, 22);
-        public static readonly Vector2 TopContact = new(120, 30);
-        public static readonly Vector2 BottomContact = new(30, 120);
-        public static readonly Vector2 BottomTip = new(22, 123);
+        public static readonly Vector2 Shelf = new(50, 72);
+        /// <summary>Where the arrow's nock sits on the braced string (10 arrow steps behind <see cref="Shelf"/>).</summary>
+        public static readonly Vector2 Nock = new(70, 82);
+        public static readonly Vector2 TopTip = new(96, 20);
+        public static readonly Vector2 TopContact = new(96, 30);
+        public static readonly Vector2 BottomContact = new(40, 142);
+        public static readonly Vector2 BottomTip = new(32, 148);
     }
 
-    /// <summary>arrow.png (54x54): drawn at 45°, tip up-left. Moves only along that diagonal.</summary>
+    /// <summary>arrow.png (64x38): drawn on a 2:1 slope, tip up-left. Moves only along that line.</summary>
     public static class Arrow
     {
-        public static readonly Vector2 Nock = new(48, 48);
-        public static readonly Vector2 Tip = new(4, 4);
-        /// <summary>Unit step from nock toward tip, one pixel on each axis.</summary>
-        public static readonly Vector2 Direction = new(-1, -1);
+        public static readonly Vector2 Nock = new(58, 32);
+        public static readonly Vector2 Tip = new(8, 7);
+        /// <summary>One pixel-exact step from nock toward tip: 2 px left, 1 px up.</summary>
+        public static readonly Vector2 Direction = new(-2, -1);
     }
 }

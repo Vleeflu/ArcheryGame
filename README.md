@@ -32,9 +32,9 @@ pixel-art editor (Aseprite, Piskel, Figma with pixel grid, …) and rebuild.
 - Some sprites have attachment points (arrow rest and string nock point on the bow, the arrow's nock, the face
   centre on the target stand). They live in `SpriteAnchors.cs`; if you redraw one of those images, update its pixel
   coordinates there.
-- The arrow is drawn pre-angled at 45° and the bow is tilted 45° the other way, so the arrow sits perpendicular to
-  the string, on the arrow rest, with its nock on the string. The target sits on the arrow's diagonal. Pulling later
-  slides the arrow along that diagonal instead of rotating it (rotated pixel art turns jagged).
+- The arrow is drawn pre-angled on a 2:1 slope (2 px left, 1 px up per step) and the bow leans the perpendicular way,
+  so the arrow sits square to the string, on the arrow rest, with its nock on the string. The target sits on the
+  arrow's line. Pulling later slides the arrow along that line instead of rotating it (rotated pixel art turns jagged).
 - The bowstring is not part of `bow.png`; the game draws it as a 1-pixel line between the bow's tip/contact anchors
   so it can be pulled later.
 
@@ -45,6 +45,6 @@ pixel-art editor (Aseprite, Piskel, Figma with pixel grid, …) and rebuild.
 | `ground.png` | 320×99 | Top edge is the horizon. |
 | `target_face.png` | 41×41 | Centre (20,20), radius 20. |
 | `target_stand.png` | 60×76 | Face centre (30,28). |
-| `bow.png` | 132×132 | Tilted 45°. Arrow rest (63,57), nock point on string (78,72), tips/contacts in `SpriteAnchors.Bow`. |
-| `arrow.png` | 54×54 | Nock (48,48), tip (4,4). Fletching sits near the nock, clear of the bow. |
+| `bow.png` | 110×160 | Nearly upright, leaning on a 1:2 slope. Arrow rest (50,72), nock point on string (70,82), tips/contacts in `SpriteAnchors.Bow`. |
+| `arrow.png` | 64×38 | 2:1 slope. Nock (58,32), tip (8,7). Fletching sits near the nock, clear of the bow. |
 | `crosshair.png` | 11×11 | Centred. |

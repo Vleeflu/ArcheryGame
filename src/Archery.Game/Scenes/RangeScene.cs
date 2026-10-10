@@ -12,13 +12,13 @@ namespace Archery.Scenes;
 public sealed class RangeScene : IScene
 {
     private const int Horizon = 81;
-    private static readonly Vector2 Target = new(156, 82);
+    private static readonly Vector2 Target = new(132, 84);
 
     /// <summary>
-    /// The arrow is drawn at 45°, so the arrow rest sits on the diagonal through the target centre, this many
-    /// pixel steps back from it.
+    /// The arrow is drawn on a fixed slope, so the arrow rest sits on that line through the target centre, this many
+    /// arrow steps back from it.
     /// </summary>
-    private const int RestDistance = 60;
+    private const int RestDistance = 40;
     private static readonly Vector2 ArrowRest = Target - SpriteAnchors.Arrow.Direction * RestDistance;
 
     private static readonly Color StringColor = new(234, 212, 170, 255);
@@ -70,8 +70,8 @@ public sealed class RangeScene : IScene
         PixelLine(topTip, topContact, StringColor);
         PixelLine(topContact, bottomContact, StringColor);
         PixelLine(bottomContact, bottomTip, StringColor);
-        var along = new Vector2(Math.Sign(topContact.X - bottomContact.X), Math.Sign(topContact.Y - bottomContact.Y));
-        PixelLine(nock - along * 4, nock + along * 4, ServingColor);
+        var along = Vector2.Normalize(topContact - bottomContact) * 4.5f;
+        PixelLine(nock - along, nock + along, ServingColor);
     }
 
     /// <summary>Bresenham line, one pixel wide, no anti-aliasing.</summary>
