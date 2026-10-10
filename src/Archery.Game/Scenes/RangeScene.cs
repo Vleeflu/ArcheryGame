@@ -6,8 +6,9 @@ using Raylib_cs;
 namespace Archery.Scenes;
 
 /// <summary>
-/// First-person view of the shooting range at rest: floating bow, arrow nocked and pointing at the target.
-/// Drawn in native <see cref="PixelScreen"/> pixels. Layout only; no aiming, drawing, or shooting yet.
+/// First-person view of the shooting range: floating bow with a nocked arrow aimed at the target.
+/// Left click releases the arrow; it travels along its line until the tip reaches the crosshair and sticks there,
+/// then a fresh arrow is nocked. Drawn in native <see cref="PixelScreen"/> pixels.
 /// </summary>
 public sealed class RangeScene : IScene
 {
@@ -19,12 +20,27 @@ public sealed class RangeScene : IScene
     /// arrow steps back from it.
     /// </summary>
     private const int RestDistance = 40;
+
+    /// <summary>Seconds from release until the arrow sticks.</summary>
+    private const float FlightSeconds = 0.18f;
+
     private static readonly Vector2 ArrowRest = Target - SpriteAnchors.Arrow.Direction * RestDistance;
+    private static readonly Vector2 BowOrigin = ArrowRest - SpriteAnchors.Bow.Shelf;
+    private static readonly Vector2 NockedNock = BowOrigin + SpriteAnchors.Bow.Nock;
+
+    /// <summary>Arrow steps the nock travels until the arrow's tip is on the crosshair.</summary>
+    private static readonly int FlightSteps = StepsAlongArrow(Target - NockedNock) - StepsAlongArrow(SpriteAnchors.Arrow.Tip - SpriteAnchors.Arrow.Nock);
 
     private static readonly Color StringColor = new(234, 212, 170, 255);
     private static readonly Color ServingColor = new(24, 20, 37, 255);
 
     private readonly AssetStore _assets;
+
+    /// <summary>Nock positions of arrows that have landed in the target, oldest first.</summary>
+    private readonly List<Vector2> _stuckArrows = new();
+
+    /// <summary>Seconds since release while an arrow is in the air; null when an arrow is nocked.</summary>
+    private float? _flightTime;
 
     public RangeScene(AssetStore assets)
     {
@@ -33,7 +49,24 @@ public sealed class RangeScene : IScene
 
     public void Enter() { }
 
-    public void Update(float dt) { }
+    public void Update(float dt)
+    {
+        if (_flightTime is null)
+        {
+            if (Raylib.IsMouseButtonPressed(MouseButton.Left))
+            {
+                _flightTime = 0f;
+            }
+            return;
+        }
+
+        _flightTime += dt;
+        if (_flightTime >= FlightSeconds)
+        {
+            _stuckArrows.Add(FlyingNock(FlightSeconds));
+            _flightTime = null; // next arrow is nocked
+        }
+    }
 
     public void Draw()
     {
@@ -44,20 +77,37 @@ public sealed class RangeScene : IScene
 
         DrawAt(AssetIds.TargetStand, SpriteAnchors.TargetStand.FaceCenter, Target);
         DrawAt(AssetIds.TargetFace, SpriteAnchors.TargetFace.Center, Target);
-
-        // Bow rig: bow placed by its arrow rest; arrow nock sits on the string, shaft over the rest.
-        var bowOrigin = ArrowRest - SpriteAnchors.Bow.Shelf;
-        var nock = bowOrigin + SpriteAnchors.Bow.Nock;
+        foreach (var nock in _stuckArrows)
+        {
+            DrawAt(AssetIds.Arrow, SpriteAnchors.Arrow.Nock, nock);
+        }
 
         DrawAt(AssetIds.Bow, SpriteAnchors.Bow.Shelf, ArrowRest);
-        DrawAt(AssetIds.Arrow, SpriteAnchors.Arrow.Nock, nock);
-        DrawString(bowOrigin, nock);
+        if (_flightTime is { } t)
+        {
+            DrawAt(AssetIds.Arrow, SpriteAnchors.Arrow.Nock, FlyingNock(t));
+        }
+        else
+        {
+            DrawAt(AssetIds.Arrow, SpriteAnchors.Arrow.Nock, NockedNock);
+        }
+        DrawString(BowOrigin, NockedNock);
 
         var crosshair = _assets.Texture(AssetIds.Crosshair);
         DrawAt(AssetIds.Crosshair, new Vector2(crosshair.Width / 2, crosshair.Height / 2), Target);
     }
 
     public void Exit() { }
+
+    /// <summary>Nock position of the flying arrow, snapped to whole arrow steps so it moves pixel-exactly.</summary>
+    private static Vector2 FlyingNock(float time)
+    {
+        int steps = (int)(FlightSteps * Math.Clamp(time / FlightSeconds, 0f, 1f));
+        return NockedNock + SpriteAnchors.Arrow.Direction * steps;
+    }
+
+    /// <summary>How many arrow steps <paramref name="offset"/> spans (it must lie on the arrow's line).</summary>
+    private static int StepsAlongArrow(Vector2 offset) => (int)(offset.X / SpriteAnchors.Arrow.Direction.X);
 
     /// <summary>Braced string: tips wrap the recurves, straight run between the contact points, serving at the nock.</summary>
     private static void DrawString(Vector2 bowOrigin, Vector2 nock)

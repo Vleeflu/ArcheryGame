@@ -8,6 +8,13 @@ First-person bow-and-arrow target game in pixel art. C# / .NET 10 / [Raylib-cs](
 dotnet run --project src/Archery.Game
 ```
 
+## Controls
+
+| Input | Action |
+|---|---|
+| Left click | Release the arrow. It travels along its line to the crosshair, sticks in the target, and a new arrow is nocked. |
+| Esc | Quit. |
+
 ## Layout
 
 | Path | Purpose |
