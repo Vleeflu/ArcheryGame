@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Archery.AssetGen</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Raylib-cs" Version="8.1.0" />
+  </ItemGroup>
+
+  <!-- Asset file names are shared with the game so both sides agree on what exists. -->
+  <ItemGroup>
+    <Compile Include="..\..\src\Archery.Game\Assets\AssetIds.cs" Link="Shared\AssetIds.cs" />
+  </ItemGroup>
+
+</Project>
