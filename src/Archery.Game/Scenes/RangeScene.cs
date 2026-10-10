@@ -12,12 +12,14 @@ namespace Archery.Scenes;
 /// <item>Ready: bow held low at the side, arrow nocked and pointing at the target.</item>
 /// <item>Drawing (hold left mouse): the lowered bow drops away and the bow is raised upright in front of your face;
 /// you look down the arrow while it is drawn back toward you, its point settling on the rest inside the crosshair.</item>
-/// <item>Flying (release): the camera chases the arrow downrange in slow motion and stops short of the target.</item>
-/// <item>Impact: the view holds on the target, then cuts back to the archer with a fresh arrow.</item>
+/// <item>Flying (release): the arrow flies downrange in slow motion while the view zooms in on the target.</item>
+/// <item>Impact: the zoomed view holds on the hit, then cuts back to the archer with a fresh arrow.</item>
 /// </list>
-/// The world is drawn through a <see cref="PixelCamera"/> (the eye, or the arrow cam). The bows are 2D sprites in
-/// front of it; the arrow in the aim and in flight is a 3D object, so release continues seamlessly into the flight.
-/// Drawn in native <see cref="PixelScreen"/> pixels.
+/// Everything is seen from the eye through a <see cref="PixelCamera"/>; the flight zoom only lengthens its lens.
+/// The backdrop and the target are drawn in the fine-pixel back layer (pixels half the size, so the target's rings
+/// stay readable); arrows, bows and the crosshair are native pixel art in front. The arrow in the aim and in flight is
+/// a 3D object, so release continues seamlessly into the flight. Coordinates are native <see cref="PixelScreen"/>
+/// pixels in both layers.
 /// </summary>
 public sealed class RangeScene : IScene
 {
@@ -49,9 +51,13 @@ public sealed class RangeScene : IScene
     private const float RaiseDelay = 0.06f;         // raised bow starts coming up after this
     private const float RaiseSeconds = 0.22f;       // raised bow travels into place
     private const float DrawSeconds = 0.7f;         // then the arrow is drawn back to full draw
-    private const float ArrowCamTimeScale = 0.6f;   // slow motion while following the arrow
-    private const float ArrowCamStopShort = 5f;     // the chase camera stops this many metres before the target
+    private const float FlightTimeScale = 0.6f;     // slow motion while the arrow flies
+    private const float BowDropSeconds = 0.25f;     // flight seconds for the raised bow to drop out of view
+    private const float ImpactZoom = 6f;            // lens zoom on the target by the time the arrow lands
     private const float ImpactHoldSeconds = 0.9f;   // how long to look at the hit before cutting back
+
+    /// <summary>Radius of the target face on screen from the shooting line (native px); sets the eye's focal length.</summary>
+    private const float TargetFaceRadiusPixels = 10f;
 
     /// <summary>How far below its place the raised bow starts, and where it drops to after release.</summary>
     private static readonly Vector2 AimBowOffscreen = new(0, 200);
@@ -66,11 +72,10 @@ public sealed class RangeScene : IScene
     private static readonly Vector2 NockedNock = BowOrigin + SpriteAnchors.Bow.Nock;
     private static readonly Vector2 AimBowOrigin = AimPoint - SpriteAnchors.BowAim.Rest;
 
-    /// <summary>The archer's eye. Focal length makes the face sprite the right size for a 122 cm face at 30 m.</summary>
+    /// <summary>The archer's eye. Focal length makes a 122 cm face at 30 m <see cref="TargetFaceRadiusPixels"/> in radius.</summary>
     private static readonly PixelCamera Eye = new(
         new Vector2(PixelScreen.Width / 2f, Horizon),
-        SpriteAnchors.TargetFace.Radius * TargetDistance / TargetFaceRadius,
-        Vector3.Zero);
+        TargetFaceRadiusPixels * TargetDistance / TargetFaceRadius);
 
     private static readonly Vector3 TargetWorld = Eye.Unproject(Target + PixelCentre, TargetDistance);
     private static readonly float ArrowLength = ArrowLengthMatchingLoweredSprite();
@@ -139,7 +144,7 @@ public sealed class RangeScene : IScene
                 break;
 
             case Phase.Flying:
-                _phaseTime += dt * ArrowCamTimeScale;
+                _phaseTime += dt * FlightTimeScale;
                 if (_phaseTime >= _flight!.Duration)
                 {
                     var (landedTip, heading) = _flight.At(_flight.Duration);
@@ -159,16 +164,16 @@ public sealed class RangeScene : IScene
         }
     }
 
-    public void Draw()
+    public void DrawFinePixels()
     {
         var camera = CurrentCamera();
-
-        var hills = _assets.Texture(AssetIds.Hills);
-        Raylib.DrawTexture(_assets.Texture(AssetIds.Sky), 0, 0, Color.White);
-        Raylib.DrawTexture(hills, 0, Horizon + 2 - hills.Height, Color.White);
-        Raylib.DrawTexture(_assets.Texture(AssetIds.Ground), 0, Horizon, Color.White);
-
+        DrawBackdrop(camera);
         DrawTarget(camera);
+    }
+
+    public void DrawPixelArt()
+    {
+        var camera = CurrentCamera();
         foreach (var (tip, direction) in _stuckArrows)
         {
             DrawArrow3D(camera, tip, direction, embedded: true);
@@ -196,7 +201,7 @@ public sealed class RangeScene : IScene
                 break;
 
             case Phase.Flying:
-                float dropped = ArrowCam.Blend(_phaseTime);
+                float dropped = SmoothStep(_phaseTime / BowDropSeconds);
                 if (dropped < 1f)
                 {
                     DrawRaisedBow(Vector2.Round(AimBowOffscreen * dropped), drawProgress: null);
@@ -215,12 +220,20 @@ public sealed class RangeScene : IScene
         _phaseTime = 0f;
     }
 
-    private PixelCamera CurrentCamera() => _phase switch
+    /// <summary>
+    /// The eye, zoomed about the target centre while the arrow flies: from 1× at release to <see cref="ImpactZoom"/> at
+    /// landing, eased at both ends and even in perceived speed (interpolated in log scale). Held through the impact.
+    /// </summary>
+    private PixelCamera CurrentCamera()
     {
-        Phase.Flying => Eye with { Position = ArrowCam.Position(_flight!, _phaseTime, TargetWorld.Z - ArrowCamStopShort) },
-        Phase.Impact => Eye with { Position = ArrowCam.Position(_flight!, _flight!.Duration, TargetWorld.Z - ArrowCamStopShort) },
-        _ => Eye,
-    };
+        float zoom = _phase switch
+        {
+            Phase.Flying => MathF.Pow(ImpactZoom, SmoothStep(_phaseTime / _flight!.Duration)),
+            Phase.Impact => ImpactZoom,
+            _ => 1f,
+        };
+        return Eye.ZoomedAbout(Eye.Project(TargetWorld), zoom);
+    }
 
     /// <summary>0 at brace height, 1 at full draw. Drawing starts once the bow is up; ease-out so it feels heavy at the end.</summary>
     private float DrawProgress() => EaseOut((_phaseTime - RaiseDelay - RaiseSeconds) / DrawSeconds);
@@ -238,6 +251,12 @@ public sealed class RangeScene : IScene
     {
         float p = Math.Clamp(x, 0f, 1f);
         return p * p;
+    }
+
+    private static float SmoothStep(float x)
+    {
+        float p = Math.Clamp(x, 0f, 1f);
+        return p * p * (3f - 2f * p);
     }
 
     /// <summary>Lowered pose: tilted bow at the side with the arrow nocked, string straight.</summary>
@@ -278,10 +297,34 @@ public sealed class RangeScene : IScene
         DrawAt(AssetIds.Crosshair, new Vector2(crosshair.Width / 2, crosshair.Height / 2), Target);
     }
 
-    /// <summary>Target stand and face, placed and scaled by distance from <paramref name="camera"/> (exactly 1:1 from the eye).</summary>
+    /// <summary>
+    /// Sky, hills and ground: flat art standing in for the far distance. Drawn 1:1 from the eye; in a zoom it scales
+    /// with the lens like everything else.
+    /// </summary>
+    private void DrawBackdrop(PixelCamera camera)
+    {
+        var hills = _assets.Texture(AssetIds.Hills);
+        DrawZoomed(camera, AssetIds.Sky, Vector2.Zero);
+        DrawZoomed(camera, AssetIds.Hills, new Vector2(0, Horizon + 2 - hills.Height));
+        DrawZoomed(camera, AssetIds.Ground, new Vector2(0, Horizon));
+    }
+
+    /// <summary>Draws a backdrop texture whose top-left sits at <paramref name="eyeTopLeft"/> in the unzoomed eye view.</summary>
+    private void DrawZoomed(PixelCamera camera, string id, Vector2 eyeTopLeft)
+    {
+        var texture = _assets.Texture(id);
+        float zoom = camera.Focal / Eye.Focal;
+        var topLeft = Eye.ToZoomed(camera, eyeTopLeft);
+        var source = new Rectangle(0, 0, texture.Width, texture.Height);
+        var dest = new Rectangle(topLeft.X, topLeft.Y, texture.Width * zoom, texture.Height * zoom);
+        Raylib.DrawTexturePro(texture, source, dest, Vector2.Zero, 0f, Color.White);
+    }
+
+    /// <summary>Target stand and face, sized so the face is a 122 cm disc at its distance from the camera.</summary>
     private void DrawTarget(PixelCamera camera)
     {
-        float scale = TargetDistance / camera.DepthOf(TargetWorld);
+        float faceRadius = camera.Focal * TargetFaceRadius / camera.DepthOf(TargetWorld);
+        float scale = faceRadius / SpriteAnchors.TargetFace.Radius;
         var centre = camera.Project(TargetWorld);
         DrawScaled(AssetIds.TargetStand, SpriteAnchors.TargetStand.FaceCenter, centre, scale);
         DrawScaled(AssetIds.TargetFace, SpriteAnchors.TargetFace.Center, centre, scale);
@@ -497,15 +540,16 @@ public sealed class RangeScene : IScene
     }
 
     /// <summary>
-    /// Draws a sprite scaled by <paramref name="scale"/> so the centre of its pixel <paramref name="anchor"/> lands on
-    /// <paramref name="screen"/>. At scale 1 with a pixel-centre <paramref name="screen"/> this matches <see cref="DrawAt"/>.
+    /// Fine layer: draws a texture scaled by <paramref name="scale"/> (native px per image pixel) so its point
+    /// <paramref name="anchor"/> lands on <paramref name="screen"/>. The top-left is snapped to the fine pixel grid, so
+    /// at full size image pixels map exactly onto fine pixels.
     /// </summary>
     private void DrawScaled(string id, Vector2 anchor, Vector2 screen, float scale)
     {
         var texture = _assets.Texture(id);
-        var topLeft = screen - (anchor + PixelCentre) * scale;
+        var topLeft = Vector2.Round((screen - anchor * scale) * PixelScreen.FineScale) / PixelScreen.FineScale;
         var source = new Rectangle(0, 0, texture.Width, texture.Height);
-        var dest = new Rectangle(MathF.Floor(topLeft.X), MathF.Floor(topLeft.Y), texture.Width * scale, texture.Height * scale);
+        var dest = new Rectangle(topLeft.X, topLeft.Y, texture.Width * scale, texture.Height * scale);
         Raylib.DrawTexturePro(texture, source, dest, Vector2.Zero, 0f, Color.White);
     }
 }

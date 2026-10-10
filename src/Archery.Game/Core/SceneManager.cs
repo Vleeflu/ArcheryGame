@@ -13,7 +13,9 @@ public sealed class SceneManager
 
     public void Update(float dt) => _current?.Update(dt);
 
-    public void Draw() => _current?.Draw();
+    public void DrawFinePixels() => _current?.DrawFinePixels();
+
+    public void DrawPixelArt() => _current?.DrawPixelArt();
 
     public void Shutdown()
     {

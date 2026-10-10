@@ -3,22 +3,26 @@ using System.Numerics;
 namespace Archery.Assets;
 
 /// <summary>
-/// Pixel coordinates of attachment points inside each sprite image (origin top-left, whole pixels).
-/// If an image is redrawn, these must be updated to match it.
+/// Attachment points inside each image (origin top-left). Sprites drawn 1:1 use whole pixel indices; the scaled
+/// target images use continuous coordinates (pixel edges at whole numbers). If an image is redrawn, update these.
 /// </summary>
 public static class SpriteAnchors
 {
-    /// <summary>target_face.png (21x21): ten-ring face as seen from the shooting line (~30 m).</summary>
+    /// <summary>
+    /// target_face.png (241x241): 122 cm ten-ring face. Rings are tenths of <see cref="Radius"/> (10 at the centre,
+    /// 1 at the edge), plus the inner X ring at half the 10 ring. Drawn 1:1 into the fine layer at full zoom.
+    /// </summary>
     public static class TargetFace
     {
-        public static readonly Vector2 Center = new(10, 10);
-        public const int Radius = 10;
+        public static readonly Vector2 Center = new(120.5f, 120.5f);
+        /// <summary>Pixels from <see cref="Center"/> to the outer edge of the 1 ring (0.61 m).</summary>
+        public const float Radius = 120f;
     }
 
-    /// <summary>target_stand.png (32x40): straw boss on an A-frame.</summary>
+    /// <summary>target_stand.png (369x484): coiled straw boss on a wooden A-frame, same scale as the face.</summary>
     public static class TargetStand
     {
-        public static readonly Vector2 FaceCenter = new(16, 14);
+        public static readonly Vector2 FaceCenter = new(184.5f, 166.5f);
     }
 
     /// <summary>

@@ -7,6 +7,9 @@ namespace Archery.Assets;
 /// </summary>
 public sealed class AssetStore : IDisposable
 {
+    // OpenGL texture parameter and value (raylib exposes the call, not the constants).
+    private const int GlTextureMagFilter = 0x2800, GlNearest = 0x2600;
+
     private readonly string _root;
     private readonly Dictionary<string, Texture2D> _textures = new();
 
@@ -31,8 +34,21 @@ public sealed class AssetStore : IDisposable
                 throw new InvalidDataException($"Failed to load texture '{path}'.");
             }
 
-            // Pixel art: sprites are drawn 1:1 into the low-res frame, so sample nearest-neighbour only.
-            Raylib.SetTextureFilter(texture, TextureFilter.Point);
+            if (AssetIds.ScaledTextures.Contains(id))
+            {
+                // Shrunk: mipmapped and filtered, so the rings are averaged into the grid instead of breaking up.
+                // Full size or larger: nearest-neighbour, so art pixels stay square blocks. Clamping stops filtering
+                // from bleeding the opposite edge into the borders.
+                Raylib.GenTextureMipmaps(ref texture);
+                Raylib.SetTextureFilter(texture, TextureFilter.Trilinear);
+                Rlgl.TextureParameters(texture.Id, GlTextureMagFilter, GlNearest);
+                Raylib.SetTextureWrap(texture, TextureWrap.Clamp);
+            }
+            else
+            {
+                // Pixel art: sample nearest-neighbour only, so art pixels stay square blocks.
+                Raylib.SetTextureFilter(texture, TextureFilter.Point);
+            }
             _textures[id] = texture;
         }
     }

@@ -13,31 +13,39 @@ dotnet run --project src/Archery.Game
 | Input | Action |
 |---|---|
 | Hold left mouse | Raise and draw: the lowered bow drops away and the bow comes up upright in front of your face. You look down the arrow as it is drawn back toward you (0.7 s to full draw); its point settles on the arrow rest inside the crosshair. |
-| Release left mouse | Shoot. The camera follows the arrow downrange in slow motion, stops short of the target and watches it hit, then cuts back to you with a new arrow. |
+| Release left mouse | Shoot. The arrow flies downrange in slow motion while the view zooms in on the target (you stay where you are), holds on the hit, then cuts back to you with a new arrow. |
 | Esc | Quit. |
 
 ## Layout
 
 | Path | Purpose |
 |---|---|
-| `src/Archery.Game/Core` | Window, main loop, scene switching, config. `PixelScreen` is the native resolution; `PixelCamera` projects 3D points onto it. |
+| `src/Archery.Game/Core` | Window, main loop, scene switching, config. `PixelScreen` is the native resolution; `PixelCamera` projects 3D points onto it and zooms. |
 | `src/Archery.Game/Gameplay` | Game rules independent of drawing. `ArrowFlight` is the ballistic arrow model. |
-| `src/Archery.Game/Scenes` | Screens. `RangeScene` composes the first-person view and runs shots; `ArrowCam` is the chase camera. |
+| `src/Archery.Game/Scenes` | Screens. `RangeScene` composes the first-person view and runs shots. |
 | `src/Archery.Game/Assets` | Image loading (`AssetStore`), file list (`AssetIds`), sprite attachment points (`SpriteAnchors`). |
 | `assets/textures` | Finished art as PNG files, copied next to the executable on build. |
 
 ## Rendering
 
-Everything is drawn at **320×180** into an off-screen texture, then scaled up by the largest whole number that fits
-the window (4× → 1280×720), letterboxed if needed. Textures use nearest-neighbour sampling, so art pixels stay
-square blocks. Draw sprites at whole-pixel positions.
+Each frame is drawn in two pixel-art layers, both in native **320×180** coordinates, then scaled up by the largest
+whole number that fits the window (4× → 1280×720), letterboxed if needed:
+
+1. **Back (fine) layer:** sky, hills, ground and the target, rendered at `PixelScreen.FineScale` (2×) the native
+   resolution, i.e. 640×360. Still pixel art, but its pixels are half the size, so the target's ten rings stay
+   readable. The backdrop is native art, so it looks exactly as before.
+2. **Front layer:** arrows, bows, strings and the crosshair at 320×180, transparent elsewhere, composited on top.
+
+Textures use nearest-neighbour sampling, so art pixels stay square blocks; draw 1:1 sprites at whole-pixel positions.
+The target is the exception, because it is drawn at any size: shrunk, it is averaged into the fine grid (mipmaps), so
+its rings stay clean; at full size it is exact.
 
 ## 3D model and arrow flight
 
 The range has a simple 3D model behind the 2D art: the eye is at the origin looking along +Z (metres, +Y up), and
 `PixelCamera` projects onto the 320×180 frame with the horizon on row 81. The target face is 30 m away; the focal
-length is chosen so the 21-px face sprite matches a 122 cm face at that distance. The target is drawn through the
-camera, scaled by distance (exactly 1:1 from the eye).
+length is chosen so a 122 cm face has a 10 px radius at that distance (`TargetFaceRadiusPixels`). The target is drawn
+through the camera, scaled by distance and zoom.
 
 In the raised aim the arrow is a 3D object pointing at the target, drawn back along its own line toward the eye; its
 point projects onto the arrow rest of `bow_aim.png`. On release, `ArrowFlight` launches it from exactly that pose
@@ -47,18 +55,20 @@ capped at 8 px right at the eye) with a highlight, red fletching, a steel point 
 it is drawn as its fletching from behind: an outlined red "Y" around the green nock, sized by distance.
 
 A landed arrow keeps its point in the target and its shaft sags `StuckSagDegrees` (8°) from its flight heading, as the
-protruding shaft of a real arrow droops in a straw boss. From the arrow cam this shows the shaft standing out of the
-face; it is drawn at least 2 px wide (so it keeps its outline), with no steel point and a dark entry hole at the tip.
+protruding shaft of a real arrow droops in a straw boss. Zoomed in, this shows the shaft standing out of the face;
+it is drawn at least 2 px wide (so it keeps its outline), with no steel point and a dark entry hole at the tip.
 From the shooting line it is seen end-on, as the outlined fletching inside the crosshair.
 
-`ArrowCam` moves the camera during the flight: from the eye it slides along the eye→tip line to just behind and above
-the arrow, follows it, and stops 5 m before the target on the arrow's line so the arrow flies on into it. The sky,
-hills and ground do not move with the camera yet.
+During the flight the camera stays at the eye and zooms like a lens (`PixelCamera.ZoomedAbout`): from 1× at release
+to `ImpactZoom` (6×) at landing, about the target centre, eased and even in log scale, then held through the impact.
+A zoom scales everything about that point, so the backdrop is simply drawn scaled; nothing moves toward you. At 6× the
+target face is drawn exactly 1:1 into the fine layer.
 
 ## Art
 
-Assets are plain PNG files drawn at native size (one image pixel = one game pixel). Edit or replace them in any
-pixel-art editor (Aseprite, Piskel, Figma with pixel grid, …) and rebuild.
+Assets are plain PNG files of pixel art. Edit or replace them in any pixel-art editor (Aseprite, Piskel, Figma with
+pixel grid, …) and rebuild. Sprites are drawn at native size (one image pixel = one game pixel); the target images
+are drawn scaled, and are 1:1 with the fine layer (half a game pixel per image pixel) at full zoom.
 
 - **PNG only.** The raylib build bundled with Raylib-cs has no JPG decoder.
 - Some sprites have attachment points (arrow rest and string nock point on the bow, the arrow's nock, the face
@@ -75,8 +85,8 @@ pixel-art editor (Aseprite, Piskel, Figma with pixel grid, …) and rebuild.
 | `sky.png` | 320×84 | Drawn at the top. |
 | `hills.png` | 320×40 | Bottom edge sits on the horizon (y=81). |
 | `ground.png` | 320×99 | Top edge is the horizon. |
-| `target_face.png` | 21×21 | Centre (10,10), radius 10 (sets the camera scale, see Arrow flight). |
-| `target_stand.png` | 32×40 | Face centre (16,14). |
+| `target_face.png` | 241×241 | 122 cm ten-ring face, rings every 12 px. Centre (120.5,120.5), radius 120 (continuous coordinates). |
+| `target_stand.png` | 369×484 | Coiled straw boss on an A-frame, same scale as the face. Face centre (184.5,166.5). |
 | `bow.png` | 110×160 | Nearly upright, leaning on a 1:2 slope. Arrow rest (50,72), nock point on string (70,82), tips/contacts in `SpriteAnchors.Bow`. |
 | `bow_aim.png` | 64×260 | Bow raised in front of the face, seen from behind, limbs running off-screen. Arrow-rest tip (24,127), string ends in `SpriteAnchors.BowAim`. |
 | `arrow.png` | 64×38 | 2:1 slope. Nock (58,32), tip (8,7). Fletching sits near the nock, clear of the bow. |
