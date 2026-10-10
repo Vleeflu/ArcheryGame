@@ -12,7 +12,8 @@ dotnet run --project src/Archery.Game
 
 | Input | Action |
 |---|---|
-| Left click | Release the arrow. It flies to the crosshair and stays in the target; a new arrow is nocked. |
+| Hold left mouse | Draw the bow: the arrow slides back along its line and the string bends into a V. Full draw takes 0.7 s; at full draw the point sits just in front of the arrow rest. |
+| Release left mouse | Shoot. The arrow flies to the crosshair and stays in the target; a new arrow is nocked. |
 | Esc | Quit. |
 
 ## Layout
@@ -54,9 +55,10 @@ pixel-art editor (Aseprite, Piskel, Figma with pixel grid, …) and rebuild.
   coordinates there.
 - The arrow is drawn pre-angled on a 2:1 slope (2 px left, 1 px up per step) and the bow leans the perpendicular way,
   so the arrow sits square to the string, on the arrow rest, with its nock on the string. The target sits on the
-  arrow's line. Pulling later slides the arrow along that line instead of rotating it (rotated pixel art turns jagged).
-- The bowstring is not part of `bow.png`; the game draws it as a 1-pixel line between the bow's tip/contact anchors
-  so it can be pulled later.
+  arrow's line. Drawing the bow slides the arrow back along that line instead of rotating it (rotated pixel art turns
+  jagged).
+- The bowstring is not part of `bow.png`; the game draws it as 1-pixel lines from the bow's tips through the contact
+  points to the nock, so it bends into a V when drawn.
 
 | File | Size | Anchors |
 |---|---|---|
