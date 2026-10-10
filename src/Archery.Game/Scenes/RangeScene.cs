@@ -1,46 +1,64 @@
 using System.Numerics;
 using Archery.Assets;
 using Archery.Core;
+using Archery.Gameplay;
 using Raylib_cs;
 
 namespace Archery.Scenes;
 
 /// <summary>
-/// First-person view of the shooting range: floating bow with a nocked arrow aimed at the target.
-/// Left click releases the arrow; it travels along its line until the tip reaches the crosshair and sticks there,
-/// then a fresh arrow is nocked. Drawn in native <see cref="PixelScreen"/> pixels.
+/// First-person view of the shooting range: floating bow with a nocked arrow aimed at a target ~30 m away.
+/// Left click releases the arrow; it flies as a 3D ballistic object (projected through <see cref="Camera"/>),
+/// lands on the crosshair and stays in the target, then a fresh arrow is nocked.
+/// Drawn in native <see cref="PixelScreen"/> pixels.
 /// </summary>
 public sealed class RangeScene : IScene
 {
     private const int Horizon = 81;
-    private static readonly Vector2 Target = new(132, 84);
+    private static readonly Vector2 Target = new(132, 86);
 
     /// <summary>
-    /// The arrow is drawn on a fixed slope, so the arrow rest sits on that line through the target centre, this many
-    /// arrow steps back from it.
+    /// The nocked arrow sprite is drawn on a fixed slope, so the arrow rest sits on that line through the target
+    /// centre, this many arrow steps back from it.
     /// </summary>
     private const int RestDistance = 40;
 
-    /// <summary>Seconds from release until the arrow sticks.</summary>
-    private const float FlightSeconds = 0.18f;
+    private const float TargetDistance = 30f;       // metres to the target face
+    private const float TargetFaceRadius = 0.61f;   // metres (122 cm face)
+    private const float NockDepth = 0.75f;          // metres from the eye to the nocked arrow's nock
+    private const float FlightSeconds = 0.6f;       // ~50 m/s: a touch slower than a real recurve so the arc reads on screen
+    private const float ShaftThickness = 0.006f;    // metres, slightly exaggerated so near arrows read clearly
+
+    private static readonly Vector2 PixelCentre = new(0.5f, 0.5f);
 
     private static readonly Vector2 ArrowRest = Target - SpriteAnchors.Arrow.Direction * RestDistance;
     private static readonly Vector2 BowOrigin = ArrowRest - SpriteAnchors.Bow.Shelf;
     private static readonly Vector2 NockedNock = BowOrigin + SpriteAnchors.Bow.Nock;
 
-    /// <summary>Arrow steps the nock travels until the arrow's tip is on the crosshair.</summary>
-    private static readonly int FlightSteps = StepsAlongArrow(Target - NockedNock) - StepsAlongArrow(SpriteAnchors.Arrow.Tip - SpriteAnchors.Arrow.Nock);
+    /// <summary>Focal length chosen so the face sprite is the right size for a 122 cm face at <see cref="TargetDistance"/>.</summary>
+    private static readonly PixelCamera Camera = new(
+        new Vector2(PixelScreen.Width / 2f, Horizon),
+        SpriteAnchors.TargetFace.Radius * TargetDistance / TargetFaceRadius);
+
+    private static readonly Vector3 NockWorld = Camera.Unproject(NockedNock + PixelCentre, NockDepth);
+    private static readonly Vector3 TargetWorld = Camera.Unproject(Target + PixelCentre, TargetDistance);
+    private static readonly float ArrowLength = ArrowLengthMatchingSprite();
 
     private static readonly Color StringColor = new(234, 212, 170, 255);
     private static readonly Color ServingColor = new(24, 20, 37, 255);
+    private static readonly Color ShaftColor = new(228, 166, 114, 255);
+    private static readonly Color FletchColor = new(228, 59, 68, 255);
+    private static readonly Color NockColor = new(99, 199, 77, 255);
+    private static readonly Color PointColor = new(192, 203, 220, 255);
+    private static readonly Color StuckShaftColor = new(62, 39, 49, 255);
 
     private readonly AssetStore _assets;
 
-    /// <summary>Nock positions of arrows that have landed in the target, oldest first.</summary>
-    private readonly List<Vector2> _stuckArrows = new();
+    /// <summary>Arrows that have landed: tip position and pointing direction in world space.</summary>
+    private readonly List<(Vector3 Tip, Vector3 Direction)> _stuckArrows = new();
 
-    /// <summary>Seconds since release while an arrow is in the air; null when an arrow is nocked.</summary>
-    private float? _flightTime;
+    private ArrowFlight? _flight;
+    private float _flightTime;
 
     public RangeScene(AssetStore assets)
     {
@@ -51,20 +69,21 @@ public sealed class RangeScene : IScene
 
     public void Update(float dt)
     {
-        if (_flightTime is null)
+        if (_flight is null)
         {
             if (Raylib.IsMouseButtonPressed(MouseButton.Left))
             {
+                _flight = new ArrowFlight(NockWorld, TargetWorld, ArrowLength, FlightSeconds);
                 _flightTime = 0f;
             }
             return;
         }
 
         _flightTime += dt;
-        if (_flightTime >= FlightSeconds)
+        if (_flightTime >= _flight.Duration)
         {
-            _stuckArrows.Add(FlyingNock(FlightSeconds));
-            _flightTime = null; // next arrow is nocked
+            _stuckArrows.Add(_flight.At(_flight.Duration));
+            _flight = null; // next arrow is nocked
         }
     }
 
@@ -77,19 +96,20 @@ public sealed class RangeScene : IScene
 
         DrawAt(AssetIds.TargetStand, SpriteAnchors.TargetStand.FaceCenter, Target);
         DrawAt(AssetIds.TargetFace, SpriteAnchors.TargetFace.Center, Target);
-        foreach (var nock in _stuckArrows)
+        foreach (var (tip, direction) in _stuckArrows)
         {
-            DrawAt(AssetIds.Arrow, SpriteAnchors.Arrow.Nock, nock);
+            DrawArrow3D(tip, direction);
         }
 
         DrawAt(AssetIds.Bow, SpriteAnchors.Bow.Shelf, ArrowRest);
-        if (_flightTime is { } t)
+        if (_flight is null)
         {
-            DrawAt(AssetIds.Arrow, SpriteAnchors.Arrow.Nock, FlyingNock(t));
+            DrawAt(AssetIds.Arrow, SpriteAnchors.Arrow.Nock, NockedNock);
         }
         else
         {
-            DrawAt(AssetIds.Arrow, SpriteAnchors.Arrow.Nock, NockedNock);
+            var (tip, direction) = _flight.At(_flightTime);
+            DrawArrow3D(tip, direction);
         }
         DrawString(BowOrigin, NockedNock);
 
@@ -99,15 +119,54 @@ public sealed class RangeScene : IScene
 
     public void Exit() { }
 
-    /// <summary>Nock position of the flying arrow, snapped to whole arrow steps so it moves pixel-exactly.</summary>
-    private static Vector2 FlyingNock(float time)
+    /// <summary>
+    /// World length of the arrow such that, projected, its tip lands where the nocked sprite's tip is drawn.
+    /// The sprite's tip sits a fraction <c>s</c> of the screen distance from nock to target; along a 3D segment
+    /// from depth z0 to z1, screen fraction s corresponds to segment fraction s·z0 / (z1·(1−s) + s·z0).
+    /// </summary>
+    private static float ArrowLengthMatchingSprite()
     {
-        int steps = (int)(FlightSteps * Math.Clamp(time / FlightSeconds, 0f, 1f));
-        return NockedNock + SpriteAnchors.Arrow.Direction * steps;
+        float s = StepsAlongArrow(SpriteAnchors.Arrow.Tip - SpriteAnchors.Arrow.Nock) / (float)StepsAlongArrow(Target - NockedNock);
+        float z0 = NockWorld.Z, z1 = TargetWorld.Z;
+        float fraction = s * z0 / (z1 * (1f - s) + s * z0);
+        return fraction * Vector3.Distance(NockWorld, TargetWorld);
     }
 
     /// <summary>How many arrow steps <paramref name="offset"/> spans (it must lie on the arrow's line).</summary>
     private static int StepsAlongArrow(Vector2 offset) => (int)(offset.X / SpriteAnchors.Arrow.Direction.X);
+
+    /// <summary>
+    /// Draws an arrow from its world-space tip and direction. Near arrows are a shaft with red fletching; once the
+    /// projection is only a few pixels long (seen nearly end-on, e.g. stuck in the target) it becomes the
+    /// fletching seen from behind.
+    /// </summary>
+    private static void DrawArrow3D(Vector3 tip, Vector3 direction)
+    {
+        var nock = tip - direction * ArrowLength;
+        var tipPx = Snap(Camera.Project(tip));
+        var nockPx = Snap(Camera.Project(nock));
+
+        if (Vector2.Distance(tipPx, nockPx) < 3f)
+        {
+            int x = (int)nockPx.X, y = (int)nockPx.Y;
+            Raylib.DrawPixel(x, y, StuckShaftColor);
+            Raylib.DrawPixel(x - 1, y, FletchColor);
+            Raylib.DrawPixel(x + 1, y, FletchColor);
+            Raylib.DrawPixel(x, y - 1, FletchColor);
+            return;
+        }
+
+        float depth = (tip.Z + nock.Z) / 2f;
+        float width = Math.Clamp(MathF.Round(Camera.Focal * ShaftThickness / depth), 1f, 3f);
+        var fletchEnd = Snap(Vector2.Lerp(nockPx, tipPx, 0.22f));
+        Raylib.DrawLineEx(nockPx, tipPx, width, ShaftColor);
+        Raylib.DrawLineEx(nockPx, fletchEnd, width + 1f, FletchColor);
+        Raylib.DrawPixel((int)tipPx.X, (int)tipPx.Y, PointColor);
+        Raylib.DrawPixel((int)nockPx.X, (int)nockPx.Y, NockColor);
+    }
+
+    /// <summary>Centre of the pixel containing <paramref name="p"/>, so lines rasterize on the pixel grid.</summary>
+    private static Vector2 Snap(Vector2 p) => new(MathF.Floor(p.X) + 0.5f, MathF.Floor(p.Y) + 0.5f);
 
     /// <summary>Braced string: tips wrap the recurves, straight run between the contact points, serving at the nock.</summary>
     private static void DrawString(Vector2 bowOrigin, Vector2 nock)

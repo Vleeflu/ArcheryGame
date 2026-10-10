@@ -8,17 +8,17 @@ namespace Archery.Assets;
 /// </summary>
 public static class SpriteAnchors
 {
-    /// <summary>target_face.png (41x41).</summary>
+    /// <summary>target_face.png (21x21): ten-ring face as seen from the shooting line (~30 m).</summary>
     public static class TargetFace
     {
-        public static readonly Vector2 Center = new(20, 20);
-        public const int Radius = 20;
+        public static readonly Vector2 Center = new(10, 10);
+        public const int Radius = 10;
     }
 
-    /// <summary>target_stand.png (60x76): straw boss on an A-frame.</summary>
+    /// <summary>target_stand.png (32x40): straw boss on an A-frame.</summary>
     public static class TargetStand
     {
-        public static readonly Vector2 FaceCenter = new(30, 28);
+        public static readonly Vector2 FaceCenter = new(16, 14);
     }
 
     /// <summary>
