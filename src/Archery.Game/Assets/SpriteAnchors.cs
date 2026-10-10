@@ -37,6 +37,19 @@ public static class SpriteAnchors
         public static readonly Vector2 BottomTip = new(32, 148);
     }
 
+    /// <summary>
+    /// bow_aim.png (64x260): the bow raised in front of the face at full draw, seen from behind. The riser stands
+    /// upright with the limbs running off the top and bottom of the screen; the arrow rest reaches left into the sight
+    /// window. No string in the image.
+    /// </summary>
+    public static class BowAim
+    {
+        /// <summary>Tip of the arrow rest, where the arrow's point sits at full draw.</summary>
+        public static readonly Vector2 Rest = new(24, 127);
+        public static readonly Vector2 TopString = new(46, 0);
+        public static readonly Vector2 BottomString = new(34, 259);
+    }
+
     /// <summary>arrow.png (64x38): drawn on a 2:1 slope, tip up-left. Moves only along that line.</summary>
     public static class Arrow
     {
