@@ -50,14 +50,19 @@ through the camera, scaled by distance and zoom.
 In the raised aim the arrow is a 3D object pointing at the target, drawn back along its own line toward the eye; its
 point projects onto the arrow rest of `bow_aim.png`. On release, `ArrowFlight` launches it from exactly that pose
 under gravity, solving the launch velocity so the tip lands on the crosshair after `FlightSeconds`. Each frame the
-arrow's tip and nock are projected and drawn in the same style as the sprites: a shaft tapered by perspective (8 mm,
-capped at 8 px right at the eye) with a highlight, red fletching, a steel point and a dark outline. Seen nearly end-on
-it is drawn as its fletching from behind: an outlined red "Y" around the green nock, sized by distance.
+arrow's tip and nock are projected and drawn in the same style as the sprites: a shaft tapered by perspective (6 mm,
+eased toward a 4.5 px limit right at the eye, so the drawn-back arrow stays slim) with a highlight, red fletching,
+a steel point and a dark outline. Where the fletching is seen from behind (it projects shorter than it is wide) it is
+drawn as an outlined red "Y" around the green nock, sized by distance.
 
-A landed arrow keeps its point in the target and its shaft sags `StuckSagDegrees` (8°) from its flight heading, as the
-protruding shaft of a real arrow droops in a straw boss. Zoomed in, this shows the shaft standing out of the face;
-it is drawn at least 2 px wide (so it keeps its outline), with no steel point and a dark entry hole at the tip.
-From the shooting line it is seen end-on, as the outlined fletching inside the crosshair.
+Just after release the flying arrow is in the front layer (it is still in front of the dropping bow); once the bow
+is gone it, and every landed arrow, is drawn on the fine layer's grid, so it has the same pixel size as the target.
+
+A landed arrow keeps its point in the target and starts in its exact last flight pose, so there is no jump. It then
+quivers from the hit (`QuiverDegrees`, `QuiverHz`, dying down over `QuiverDecaySeconds`) and settles into a sag of
+`StuckSagDegrees` (8°), as the protruding shaft of a real arrow droops in a straw boss. Zoomed in, this shows the
+shaft from behind running into the face; it is drawn at least 2 grid pixels wide (so it keeps its outline), with no
+steel point and a dark entry hole at the tip. From the shooting line it is the outlined fletching inside the crosshair.
 
 During the flight the camera stays at the eye and zooms like a lens (`PixelCamera.ZoomedAbout`): from 1× at release
 to `ImpactZoom` (6×) at landing, about the target centre, eased and even in log scale, then held through the impact.

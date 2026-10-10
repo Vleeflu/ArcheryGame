@@ -42,10 +42,14 @@ public sealed class RangeScene : IScene
     private const float AimTipDepth = 0.78f;        // metres from the eye to the point at full draw
     private const float DrawLength = 0.45f;         // metres the nock travels from brace height to full draw
     private const float FlightSeconds = 0.6f;       // ~50 m/s
-    private const float ShaftThickness = 0.008f;    // metres (8 mm shaft); drawn at true perspective size...
-    private const float MaxShaftPixels = 8f;        // ...but capped so the end right at the eye stays an arrow, not a plank
+    private const float ShaftThickness = 0.006f;    // metres (6 mm shaft); drawn at perspective size...
+    private const float MaxShaftPixels = 4.5f;      // ...eased toward this near the eye, so it stays an arrow, not a plank
     private const float FletchSpan = 0.025f;        // metres, size of the fletching seen end-on
-    private const float StuckSagDegrees = 8f;       // a landed arrow's protruding shaft droops under its own weight
+    private const float StuckSagDegrees = 8f;       // a landed arrow's protruding shaft droops under its own weight...
+    private const float SagSettleSeconds = 0.1f;    // ...settling into it (time constant) after the hit
+    private const float QuiverDegrees = 4f;         // the shaft vibrates on impact: starting amplitude...
+    private const float QuiverHz = 7f;              // ...frequency...
+    private const float QuiverDecaySeconds = 0.18f; // ...and how fast it dies down (time constant)
 
     private const float LowerSeconds = 0.12f;       // lowered bow leaves the view
     private const float RaiseDelay = 0.06f;         // raised bow starts coming up after this
@@ -102,8 +106,13 @@ public sealed class RangeScene : IScene
 
     private readonly AssetStore _assets;
 
-    /// <summary>Arrows that have landed: tip position and (sagging) shaft direction in world space.</summary>
-    private readonly List<(Vector3 Tip, Vector3 Direction)> _stuckArrows = new();
+    /// <summary>An arrow that has landed: its point, flight heading at impact, and when it hit (scene clock).</summary>
+    private readonly record struct StuckArrow(Vector3 Tip, Vector3 Heading, float LandedAt);
+
+    private readonly List<StuckArrow> _stuckArrows = new();
+
+    /// <summary>Real seconds since the scene started; drives the landed arrows' quiver.</summary>
+    private float _clock;
 
     private Phase _phase = Phase.Ready;
 
@@ -121,6 +130,7 @@ public sealed class RangeScene : IScene
 
     public void Update(float dt)
     {
+        _clock += dt;
         switch (_phase)
         {
             case Phase.Ready:
@@ -147,8 +157,8 @@ public sealed class RangeScene : IScene
                 _phaseTime += dt * FlightTimeScale;
                 if (_phaseTime >= _flight!.Duration)
                 {
-                    var (landedTip, heading) = _flight.At(_flight.Duration);
-                    _stuckArrows.Add((landedTip, Sagged(heading)));
+                    // Lands exactly in its last flight pose; the quiver and sag play out from there.
+                    _stuckArrows.Add(new StuckArrow(_flight.At(_flight.Duration).Tip, _flight.At(_flight.Duration).Direction, _clock));
                     SetPhase(Phase.Impact);
                 }
                 break;
@@ -169,16 +179,22 @@ public sealed class RangeScene : IScene
         var camera = CurrentCamera();
         DrawBackdrop(camera);
         DrawTarget(camera);
+
+        // Arrows at the target are drawn on the target's finer pixel grid.
+        float px = 1f / PixelScreen.FineScale;
+        foreach (var arrow in _stuckArrows)
+        {
+            DrawArrow3D(camera, arrow.Tip, StuckDirection(arrow), px, embedded: true);
+        }
+        if (_phase == Phase.Flying && !RaisedBowVisible())
+        {
+            var (tip, direction) = _flight!.At(_phaseTime);
+            DrawArrow3D(camera, tip, direction, px);
+        }
     }
 
     public void DrawPixelArt()
     {
-        var camera = CurrentCamera();
-        foreach (var (tip, direction) in _stuckArrows)
-        {
-            DrawArrow3D(camera, tip, direction, embedded: true);
-        }
-
         switch (_phase)
         {
             case Phase.Ready:
@@ -200,17 +216,17 @@ public sealed class RangeScene : IScene
                 DrawCrosshair();
                 break;
 
-            case Phase.Flying:
-                float dropped = SmoothStep(_phaseTime / BowDropSeconds);
-                if (dropped < 1f)
-                {
-                    DrawRaisedBow(Vector2.Round(AimBowOffscreen * dropped), drawProgress: null);
-                }
+            case Phase.Flying when RaisedBowVisible():
+                // Just after release the arrow is still in front of the dropping bow, so it stays in this layer.
+                DrawRaisedBow(Vector2.Round(AimBowOffscreen * SmoothStep(_phaseTime / BowDropSeconds)), drawProgress: null);
                 var (flyingTip, flyingDirection) = _flight!.At(_phaseTime);
-                DrawArrow3D(camera, flyingTip, flyingDirection);
+                DrawArrow3D(CurrentCamera(), flyingTip, flyingDirection, px: 1f);
                 break;
         }
     }
+
+    /// <summary>While flying: the raised bow has not finished dropping out of view yet.</summary>
+    private bool RaisedBowVisible() => _phaseTime < BowDropSeconds;
 
     public void Exit() { }
 
@@ -285,7 +301,7 @@ public sealed class RangeScene : IScene
         }
 
         var nock = AimNock(progress);
-        DrawArrow3D(Eye, nock + AimDirection * ArrowLength, AimDirection, offset);
+        DrawArrow3D(Eye, nock + AimDirection * ArrowLength, AimDirection, px: 1f, offset);
         var nockPx = Eye.Project(nock) + offset;
         PixelLine(top, nockPx, NearStringColor);
         PixelLine(nockPx, bottom, NearStringColor);
@@ -348,14 +364,15 @@ public sealed class RangeScene : IScene
     private static int StepsAlongArrow(Vector2 offset) => (int)(offset.X / SpriteAnchors.Arrow.Direction.X);
 
     /// <summary>
-    /// Draws an arrow from its world-space tip and direction as seen by <paramref name="camera"/>, shifted on screen by
-    /// <paramref name="screenOffset"/>. Seen side-on it is drawn like the sprites: a perspective-tapered wooden shaft
-    /// with a highlight, red fletching near the nock, a steel point and a dark outline. Seen nearly end-on (projection
-    /// only a few pixels long) it is the fletching from behind, sized by distance. An <paramref name="embedded"/> arrow
-    /// (stuck in the target) has its point buried: the shaft ends in a dark entry hole, and it is never drawn thinner
-    /// than 2 px so it keeps its outline against the target rings.
+    /// Draws an arrow from its world-space tip and direction as seen by <paramref name="camera"/>, on a pixel grid of
+    /// <paramref name="px"/> native pixels (1 in the front layer, ½ in the fine layer), shifted on screen by
+    /// <paramref name="screenOffset"/>. It is drawn like the sprites: a perspective-tapered wooden shaft with a
+    /// highlight, red fletching near the nock, a steel point and a dark outline. Where the fletching is seen from
+    /// behind (it projects shorter than it is wide) it is drawn as a "Y" of vanes around the nock instead. An
+    /// <paramref name="embedded"/> arrow (stuck in the target) has its point buried: the shaft ends in a dark entry hole,
+    /// and it is never drawn thinner than 2 grid pixels so it keeps its outline against the target rings.
     /// </summary>
-    private static void DrawArrow3D(PixelCamera camera, Vector3 tip, Vector3 direction, Vector2 screenOffset = default, bool embedded = false)
+    private static void DrawArrow3D(PixelCamera camera, Vector3 tip, Vector3 direction, float px, Vector2 screenOffset = default, bool embedded = false)
     {
         var nock = tip - direction * ArrowLength;
         float tipDepth = camera.DepthOf(tip), nockDepth = camera.DepthOf(nock);
@@ -369,17 +386,17 @@ public sealed class RangeScene : IScene
             nockDepth = PixelCamera.NearPlane;
         }
 
-        var tipPx = Snap(camera.Project(tip) + screenOffset);
-        var nockPx = Snap(camera.Project(nock) + screenOffset);
+        var tipPx = Snap(camera.Project(tip) + screenOffset, px);
+        var nockPx = Snap(camera.Project(nock) + screenOffset, px);
+        int arm = (int)Math.Clamp(MathF.Round(camera.Focal * FletchSpan / nockDepth / px), 1f, 6f);
 
-        if (Vector2.Distance(tipPx, nockPx) < 3f)
+        float length = Vector2.Distance(tipPx, nockPx);
+        if (length < 3f * px)
         {
-            int arm = (int)Math.Clamp(MathF.Round(camera.Focal * FletchSpan / nockDepth), 1f, 3f);
-            DrawFletchingEndOn((int)nockPx.X, (int)nockPx.Y, arm);
+            DrawFletchingEndOn(nockPx, arm, px);
             return;
         }
 
-        float length = Vector2.Distance(tipPx, nockPx);
         var along = (tipPx - nockPx) / length;
         var side = new Vector2(-along.Y, along.X);
         if (Vector2.Dot(side, LightFrom) < 0f)
@@ -387,31 +404,38 @@ public sealed class RangeScene : IScene
             side = -side; // highlight on the lit side
         }
 
-        float minWidth = embedded ? 2f : 1f;
+        float minWidth = (embedded ? 2f : 1f) * px;
         float nockWidth = MathF.Max(ShaftPixels(camera, nockDepth), minWidth);
         float tipWidth = MathF.Max(ShaftPixels(camera, tipDepth), minWidth);
         var fletchFront = nockPx + along * length * 0.24f;
-        float fletchBackWidth = nockWidth * 2.4f + 1f;
+        float fletchBackWidth = nockWidth * 2.4f + px;
         float fletchFrontWidth = float.Lerp(nockWidth, tipWidth, 0.24f) * 1.2f;
-        var pointBase = embedded ? tipPx : tipPx - along * MathF.Max(3f, length * 0.07f);
-        float pointWidth = tipWidth * 1.8f + 1f;
+        bool fletchFromBehind = length * 0.24f < fletchBackWidth;
+        var pointBase = embedded ? tipPx : tipPx - along * MathF.Max(3f * px, length * 0.07f);
+        float pointWidth = tipWidth * 1.8f + px;
 
         // Outline first (skipped when the arrow is only a pixel or two wide, where it would swallow it).
-        if (nockWidth >= 2f)
+        if (nockWidth >= 2f * px)
         {
-            FillTaper(nockPx - along, tipPx + along, nockWidth + 2f, tipWidth + 2f, OutlineColor);
-            FillTaper(nockPx - along, fletchFront + along, fletchBackWidth + 2f, fletchFrontWidth + 2f, OutlineColor);
+            FillTaper(nockPx - along * px, tipPx + along * px, nockWidth + 2f * px, tipWidth + 2f * px, OutlineColor);
+            if (!fletchFromBehind)
+            {
+                FillTaper(nockPx - along * px, fletchFront + along * px, fletchBackWidth + 2f * px, fletchFrontWidth + 2f * px, OutlineColor);
+            }
             if (!embedded)
             {
-                FillTaper(pointBase - along, tipPx + along * 1.5f, pointWidth + 2f, 2f, OutlineColor);
+                FillTaper(pointBase - along * px, tipPx + along * 1.5f * px, pointWidth + 2f * px, 2f * px, OutlineColor);
             }
         }
 
-        FillTaper(nockPx, fletchFront, fletchBackWidth, fletchFrontWidth, FletchColor);
-        FillTaper(nockPx + side * fletchBackWidth * 0.25f, fletchFront + side * fletchFrontWidth * 0.25f,
-            fletchBackWidth * 0.3f, fletchFrontWidth * 0.3f, FletchHighlightColor);
+        if (!fletchFromBehind)
+        {
+            FillTaper(nockPx, fletchFront, fletchBackWidth, fletchFrontWidth, FletchColor);
+            FillTaper(nockPx + side * fletchBackWidth * 0.25f, fletchFront + side * fletchFrontWidth * 0.25f,
+                fletchBackWidth * 0.3f, fletchFrontWidth * 0.3f, FletchHighlightColor);
+        }
         FillTaper(nockPx, pointBase, nockWidth, tipWidth, ShaftColor);
-        if (nockWidth >= 3f)
+        if (nockWidth >= 3f * px)
         {
             FillTaper(nockPx + side * nockWidth * 0.22f, pointBase + side * tipWidth * 0.22f,
                 nockWidth * 0.35f, tipWidth * 0.35f, ShaftHighlightColor);
@@ -419,61 +443,82 @@ public sealed class RangeScene : IScene
         if (embedded)
         {
             // Entry hole: the point is inside the boss, the shaft disappears into a dark puncture.
-            int x = (int)tipPx.X, y = (int)tipPx.Y;
-            Raylib.DrawPixel(x, y, OutlineColor);
-            Raylib.DrawPixel(x - 1, y, OutlineColor);
-            Raylib.DrawPixel(x + 1, y, OutlineColor);
-            Raylib.DrawPixel(x, y - 1, OutlineColor);
-            Raylib.DrawPixel(x, y + 1, OutlineColor);
+            GridPixel(tipPx, 0, 0, px, OutlineColor);
+            GridPixel(tipPx, -1, 0, px, OutlineColor);
+            GridPixel(tipPx, 1, 0, px, OutlineColor);
+            GridPixel(tipPx, 0, -1, px, OutlineColor);
+            GridPixel(tipPx, 0, 1, px, OutlineColor);
         }
         else
         {
-            FillTaper(pointBase, tipPx, pointWidth, 1f, PointColor);
+            FillTaper(pointBase, tipPx, pointWidth, px, PointColor);
         }
-        FillTaper(nockPx - along * 1.5f, nockPx + along * 0.5f, nockWidth, nockWidth, NockColor);
+
+        if (fletchFromBehind)
+        {
+            DrawFletchingEndOn(nockPx, arm, px);
+        }
+        else
+        {
+            FillTaper(nockPx - along * 1.5f * px, nockPx + along * 0.5f * px, nockWidth, nockWidth, NockColor);
+        }
     }
 
     /// <summary>
-    /// Fletching seen from behind: a pixel "Y" of red vanes <paramref name="arm"/> pixels long (cock vane up, lit) around
-    /// the green nock at (<paramref name="x"/>, <paramref name="y"/>), with a dark outline so it reads on any ring.
+    /// Fletching seen from behind: a "Y" of red vanes <paramref name="arm"/> grid pixels long (cock vane up, lit) around
+    /// the green nock at <paramref name="centre"/>, with a dark outline so it reads on any ring.
     /// </summary>
-    private static void DrawFletchingEndOn(int x, int y, int arm)
+    private static void DrawFletchingEndOn(Vector2 centre, int arm, float px)
     {
         ReadOnlySpan<(int Dx, int Dy)> vanes = [(0, -1), (-1, 1), (1, 1)];
         foreach (var (dx, dy) in vanes)
         {
             for (int k = 0; k <= arm; k++)
             {
-                int px = x + dx * k, py = y + dy * k;
-                Raylib.DrawPixel(px - 1, py, OutlineColor);
-                Raylib.DrawPixel(px + 1, py, OutlineColor);
-                Raylib.DrawPixel(px, py - 1, OutlineColor);
-                Raylib.DrawPixel(px, py + 1, OutlineColor);
+                GridPixel(centre, dx * k - 1, dy * k, px, OutlineColor);
+                GridPixel(centre, dx * k + 1, dy * k, px, OutlineColor);
+                GridPixel(centre, dx * k, dy * k - 1, px, OutlineColor);
+                GridPixel(centre, dx * k, dy * k + 1, px, OutlineColor);
             }
         }
         foreach (var (dx, dy) in vanes)
         {
             for (int k = 1; k <= arm; k++)
             {
-                Raylib.DrawPixel(x + dx * k, y + dy * k, dy < 0 ? FletchHighlightColor : FletchColor);
+                GridPixel(centre, dx * k, dy * k, px, dy < 0 ? FletchHighlightColor : FletchColor);
             }
         }
-        Raylib.DrawPixel(x, y, NockColor);
+        GridPixel(centre, 0, 0, px, NockColor);
+    }
+
+    /// <summary>Fills the grid pixel (<paramref name="dx"/>, <paramref name="dy"/>) cells away from the one centred on <paramref name="centre"/>.</summary>
+    private static void GridPixel(Vector2 centre, int dx, int dy, float px, Color color) =>
+        Raylib.DrawRectangleV(centre + new Vector2(dx - 0.5f, dy - 0.5f) * px, new Vector2(px, px), color);
+
+    /// <summary>
+    /// A landed arrow's shaft direction now: its flight heading, tilted up (nock end down) as it quivers from the hit and
+    /// settles into a sag of <see cref="StuckSagDegrees"/>.
+    /// </summary>
+    private Vector3 StuckDirection(StuckArrow arrow)
+    {
+        float t = _clock - arrow.LandedAt;
+        float sag = StuckSagDegrees * (1f - MathF.Exp(-t / SagSettleSeconds));
+        float quiver = QuiverDegrees * MathF.Exp(-t / QuiverDecaySeconds) * MathF.Sin(2f * MathF.PI * QuiverHz * t);
+        var (sin, cos) = MathF.SinCos((sag + quiver) * MathF.PI / 180f);
+        var h = arrow.Heading;
+        return Vector3.Normalize(new Vector3(h.X, h.Y * cos + h.Z * sin, h.Z * cos - h.Y * sin));
     }
 
     /// <summary>
-    /// A landed arrow's shaft direction: its flight <paramref name="heading"/> tilted up by <see cref="StuckSagDegrees"/>,
-    /// so the protruding nock end hangs lower than the point.
+    /// On-screen shaft width (native px) at <paramref name="depth"/> metres: perspective size w, eased toward
+    /// <see cref="MaxShaftPixels"/> as w·M/(w+M). Far away it is close to true size; right at the eye it still tapers
+    /// along its length but never gets wider than the limit.
     /// </summary>
-    private static Vector3 Sagged(Vector3 heading)
+    private static float ShaftPixels(PixelCamera camera, float depth)
     {
-        var (sin, cos) = MathF.SinCos(StuckSagDegrees * MathF.PI / 180f);
-        return Vector3.Normalize(new Vector3(heading.X, heading.Y * cos + heading.Z * sin, heading.Z * cos - heading.Y * sin));
+        float w = camera.Focal * ShaftThickness / depth;
+        return w * MaxShaftPixels / (w + MaxShaftPixels);
     }
-
-    /// <summary>On-screen shaft width at <paramref name="depth"/> metres: true perspective size, capped near the eye.</summary>
-    private static float ShaftPixels(PixelCamera camera, float depth) =>
-        Math.Clamp(camera.Focal * ShaftThickness / depth, 1f, MaxShaftPixels);
 
     /// <summary>Filled quad from <paramref name="a"/> (width <paramref name="widthA"/>) to <paramref name="b"/> (width <paramref name="widthB"/>).</summary>
     private static void FillTaper(Vector2 a, Vector2 b, float widthA, float widthB, Color color)
@@ -496,8 +541,8 @@ public sealed class RangeScene : IScene
         Raylib.DrawTriangle(p, r, q, color);
     }
 
-    /// <summary>Centre of the pixel containing <paramref name="p"/>, so lines rasterize on the pixel grid.</summary>
-    private static Vector2 Snap(Vector2 p) => new(MathF.Floor(p.X) + 0.5f, MathF.Floor(p.Y) + 0.5f);
+    /// <summary>Centre of the grid pixel (size <paramref name="px"/>) containing <paramref name="p"/>, so shapes rasterize on that grid.</summary>
+    private static Vector2 Snap(Vector2 p, float px) => new((MathF.Floor(p.X / px) + 0.5f) * px, (MathF.Floor(p.Y / px) + 0.5f) * px);
 
     /// <summary>Lowered bow's string: tips wrap the recurves, straight run through the nock, serving around the nock.</summary>
     private static void DrawString(Vector2 bowOrigin, Vector2 nock)
