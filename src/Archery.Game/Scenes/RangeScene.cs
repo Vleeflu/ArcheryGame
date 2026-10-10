@@ -40,8 +40,10 @@ public sealed class RangeScene : IScene
     private const float AimTipDepth = 0.78f;        // metres from the eye to the point at full draw
     private const float DrawLength = 0.45f;         // metres the nock travels from brace height to full draw
     private const float FlightSeconds = 0.6f;       // ~50 m/s
-    private const float ShaftThickness = 0.006f;    // metres, slightly exaggerated so near arrows read clearly
+    private const float ShaftThickness = 0.008f;    // metres (8 mm shaft); drawn at true perspective size...
+    private const float MaxShaftPixels = 8f;        // ...but capped so the end right at the eye stays an arrow, not a plank
     private const float FletchSpan = 0.025f;        // metres, size of the fletching seen end-on
+    private const float StuckSagDegrees = 8f;       // a landed arrow's protruding shaft droops under its own weight
 
     private const float LowerSeconds = 0.12f;       // lowered bow leaves the view
     private const float RaiseDelay = 0.06f;         // raised bow starts coming up after this
@@ -82,15 +84,20 @@ public sealed class RangeScene : IScene
     private static readonly Color StringColor = new(234, 212, 170, 255);
     private static readonly Color NearStringColor = new(234, 212, 170, 80); // right in front of the eye: faint, out of focus
     private static readonly Color ServingColor = new(24, 20, 37, 255);
-    private static readonly Color ShaftColor = new(228, 166, 114, 255);
+    private static readonly Color OutlineColor = new(24, 20, 37, 255);
+    private static readonly Color ShaftColor = new(184, 111, 80, 255);
+    private static readonly Color ShaftHighlightColor = new(234, 212, 170, 255);
     private static readonly Color FletchColor = new(228, 59, 68, 255);
+    private static readonly Color FletchHighlightColor = new(246, 117, 122, 255);
     private static readonly Color NockColor = new(99, 199, 77, 255);
     private static readonly Color PointColor = new(192, 203, 220, 255);
-    private static readonly Color StuckShaftColor = new(62, 39, 49, 255);
+
+    /// <summary>Screen direction the light comes from (upper left), for which side of the shaft gets the highlight.</summary>
+    private static readonly Vector2 LightFrom = Vector2.Normalize(new Vector2(-1f, -1f));
 
     private readonly AssetStore _assets;
 
-    /// <summary>Arrows that have landed: tip position and pointing direction in world space.</summary>
+    /// <summary>Arrows that have landed: tip position and (sagging) shaft direction in world space.</summary>
     private readonly List<(Vector3 Tip, Vector3 Direction)> _stuckArrows = new();
 
     private Phase _phase = Phase.Ready;
@@ -135,7 +142,8 @@ public sealed class RangeScene : IScene
                 _phaseTime += dt * ArrowCamTimeScale;
                 if (_phaseTime >= _flight!.Duration)
                 {
-                    _stuckArrows.Add(_flight.At(_flight.Duration));
+                    var (landedTip, heading) = _flight.At(_flight.Duration);
+                    _stuckArrows.Add((landedTip, Sagged(heading)));
                     SetPhase(Phase.Impact);
                 }
                 break;
@@ -163,7 +171,7 @@ public sealed class RangeScene : IScene
         DrawTarget(camera);
         foreach (var (tip, direction) in _stuckArrows)
         {
-            DrawArrow3D(camera, tip, direction);
+            DrawArrow3D(camera, tip, direction, embedded: true);
         }
 
         switch (_phase)
@@ -298,10 +306,13 @@ public sealed class RangeScene : IScene
 
     /// <summary>
     /// Draws an arrow from its world-space tip and direction as seen by <paramref name="camera"/>, shifted on screen by
-    /// <paramref name="screenOffset"/>. Seen side-on it is a shaft with red fletching; seen nearly end-on (projection
-    /// only a few pixels long) it is the fletching from behind, sized by distance.
+    /// <paramref name="screenOffset"/>. Seen side-on it is drawn like the sprites: a perspective-tapered wooden shaft
+    /// with a highlight, red fletching near the nock, a steel point and a dark outline. Seen nearly end-on (projection
+    /// only a few pixels long) it is the fletching from behind, sized by distance. An <paramref name="embedded"/> arrow
+    /// (stuck in the target) has its point buried: the shaft ends in a dark entry hole, and it is never drawn thinner
+    /// than 2 px so it keeps its outline against the target rings.
     /// </summary>
-    private static void DrawArrow3D(PixelCamera camera, Vector3 tip, Vector3 direction, Vector2 screenOffset = default)
+    private static void DrawArrow3D(PixelCamera camera, Vector3 tip, Vector3 direction, Vector2 screenOffset = default, bool embedded = false)
     {
         var nock = tip - direction * ArrowLength;
         float tipDepth = camera.DepthOf(tip), nockDepth = camera.DepthOf(nock);
@@ -320,24 +331,126 @@ public sealed class RangeScene : IScene
 
         if (Vector2.Distance(tipPx, nockPx) < 3f)
         {
-            int x = (int)nockPx.X, y = (int)nockPx.Y;
             int arm = (int)Math.Clamp(MathF.Round(camera.Focal * FletchSpan / nockDepth), 1f, 3f);
-            for (int k = 1; k <= arm; k++)
-            {
-                Raylib.DrawPixel(x - k, y, FletchColor);
-                Raylib.DrawPixel(x + k, y, FletchColor);
-                Raylib.DrawPixel(x, y - k, FletchColor);
-            }
-            Raylib.DrawPixel(x, y, StuckShaftColor);
+            DrawFletchingEndOn((int)nockPx.X, (int)nockPx.Y, arm);
             return;
         }
 
-        float width = Math.Clamp(MathF.Round(camera.Focal * ShaftThickness / ((tipDepth + nockDepth) / 2f)), 1f, 3f);
-        var fletchEnd = Snap(Vector2.Lerp(nockPx, tipPx, 0.22f));
-        Raylib.DrawLineEx(nockPx, tipPx, width, ShaftColor);
-        Raylib.DrawLineEx(nockPx, fletchEnd, width + 1f, FletchColor);
-        Raylib.DrawPixel((int)tipPx.X, (int)tipPx.Y, PointColor);
-        Raylib.DrawPixel((int)nockPx.X, (int)nockPx.Y, NockColor);
+        float length = Vector2.Distance(tipPx, nockPx);
+        var along = (tipPx - nockPx) / length;
+        var side = new Vector2(-along.Y, along.X);
+        if (Vector2.Dot(side, LightFrom) < 0f)
+        {
+            side = -side; // highlight on the lit side
+        }
+
+        float minWidth = embedded ? 2f : 1f;
+        float nockWidth = MathF.Max(ShaftPixels(camera, nockDepth), minWidth);
+        float tipWidth = MathF.Max(ShaftPixels(camera, tipDepth), minWidth);
+        var fletchFront = nockPx + along * length * 0.24f;
+        float fletchBackWidth = nockWidth * 2.4f + 1f;
+        float fletchFrontWidth = float.Lerp(nockWidth, tipWidth, 0.24f) * 1.2f;
+        var pointBase = embedded ? tipPx : tipPx - along * MathF.Max(3f, length * 0.07f);
+        float pointWidth = tipWidth * 1.8f + 1f;
+
+        // Outline first (skipped when the arrow is only a pixel or two wide, where it would swallow it).
+        if (nockWidth >= 2f)
+        {
+            FillTaper(nockPx - along, tipPx + along, nockWidth + 2f, tipWidth + 2f, OutlineColor);
+            FillTaper(nockPx - along, fletchFront + along, fletchBackWidth + 2f, fletchFrontWidth + 2f, OutlineColor);
+            if (!embedded)
+            {
+                FillTaper(pointBase - along, tipPx + along * 1.5f, pointWidth + 2f, 2f, OutlineColor);
+            }
+        }
+
+        FillTaper(nockPx, fletchFront, fletchBackWidth, fletchFrontWidth, FletchColor);
+        FillTaper(nockPx + side * fletchBackWidth * 0.25f, fletchFront + side * fletchFrontWidth * 0.25f,
+            fletchBackWidth * 0.3f, fletchFrontWidth * 0.3f, FletchHighlightColor);
+        FillTaper(nockPx, pointBase, nockWidth, tipWidth, ShaftColor);
+        if (nockWidth >= 3f)
+        {
+            FillTaper(nockPx + side * nockWidth * 0.22f, pointBase + side * tipWidth * 0.22f,
+                nockWidth * 0.35f, tipWidth * 0.35f, ShaftHighlightColor);
+        }
+        if (embedded)
+        {
+            // Entry hole: the point is inside the boss, the shaft disappears into a dark puncture.
+            int x = (int)tipPx.X, y = (int)tipPx.Y;
+            Raylib.DrawPixel(x, y, OutlineColor);
+            Raylib.DrawPixel(x - 1, y, OutlineColor);
+            Raylib.DrawPixel(x + 1, y, OutlineColor);
+            Raylib.DrawPixel(x, y - 1, OutlineColor);
+            Raylib.DrawPixel(x, y + 1, OutlineColor);
+        }
+        else
+        {
+            FillTaper(pointBase, tipPx, pointWidth, 1f, PointColor);
+        }
+        FillTaper(nockPx - along * 1.5f, nockPx + along * 0.5f, nockWidth, nockWidth, NockColor);
+    }
+
+    /// <summary>
+    /// Fletching seen from behind: a pixel "Y" of red vanes <paramref name="arm"/> pixels long (cock vane up, lit) around
+    /// the green nock at (<paramref name="x"/>, <paramref name="y"/>), with a dark outline so it reads on any ring.
+    /// </summary>
+    private static void DrawFletchingEndOn(int x, int y, int arm)
+    {
+        ReadOnlySpan<(int Dx, int Dy)> vanes = [(0, -1), (-1, 1), (1, 1)];
+        foreach (var (dx, dy) in vanes)
+        {
+            for (int k = 0; k <= arm; k++)
+            {
+                int px = x + dx * k, py = y + dy * k;
+                Raylib.DrawPixel(px - 1, py, OutlineColor);
+                Raylib.DrawPixel(px + 1, py, OutlineColor);
+                Raylib.DrawPixel(px, py - 1, OutlineColor);
+                Raylib.DrawPixel(px, py + 1, OutlineColor);
+            }
+        }
+        foreach (var (dx, dy) in vanes)
+        {
+            for (int k = 1; k <= arm; k++)
+            {
+                Raylib.DrawPixel(x + dx * k, y + dy * k, dy < 0 ? FletchHighlightColor : FletchColor);
+            }
+        }
+        Raylib.DrawPixel(x, y, NockColor);
+    }
+
+    /// <summary>
+    /// A landed arrow's shaft direction: its flight <paramref name="heading"/> tilted up by <see cref="StuckSagDegrees"/>,
+    /// so the protruding nock end hangs lower than the point.
+    /// </summary>
+    private static Vector3 Sagged(Vector3 heading)
+    {
+        var (sin, cos) = MathF.SinCos(StuckSagDegrees * MathF.PI / 180f);
+        return Vector3.Normalize(new Vector3(heading.X, heading.Y * cos + heading.Z * sin, heading.Z * cos - heading.Y * sin));
+    }
+
+    /// <summary>On-screen shaft width at <paramref name="depth"/> metres: true perspective size, capped near the eye.</summary>
+    private static float ShaftPixels(PixelCamera camera, float depth) =>
+        Math.Clamp(camera.Focal * ShaftThickness / depth, 1f, MaxShaftPixels);
+
+    /// <summary>Filled quad from <paramref name="a"/> (width <paramref name="widthA"/>) to <paramref name="b"/> (width <paramref name="widthB"/>).</summary>
+    private static void FillTaper(Vector2 a, Vector2 b, float widthA, float widthB, Color color)
+    {
+        var d = b - a;
+        if (d.LengthSquared() < 1e-4f)
+        {
+            return;
+        }
+        var n = Vector2.Normalize(new Vector2(-d.Y, d.X));
+        Vector2 a0 = a + n * widthA / 2f, a1 = a - n * widthA / 2f, b0 = b + n * widthB / 2f, b1 = b - n * widthB / 2f;
+        FillTriangle(a0, a1, b1, color);
+        FillTriangle(a0, b1, b0, color);
+    }
+
+    /// <summary>raylib only fills triangles of one winding; issuing both makes the fill independent of orientation.</summary>
+    private static void FillTriangle(Vector2 p, Vector2 q, Vector2 r, Color color)
+    {
+        Raylib.DrawTriangle(p, q, r, color);
+        Raylib.DrawTriangle(p, r, q, color);
     }
 
     /// <summary>Centre of the pixel containing <paramref name="p"/>, so lines rasterize on the pixel grid.</summary>
